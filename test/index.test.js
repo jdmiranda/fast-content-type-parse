@@ -18,7 +18,7 @@ const invalidTypes = [
 ]
 
 test('parse', async function (t) {
-  t.plan(13 + invalidTypes.length)
+  t.plan(17 + invalidTypes.length)
   await t.test('should parse basic type', function (t) {
     t.plan(1)
     const type = parse('text/html')
@@ -125,10 +125,52 @@ test('parse', async function (t) {
     // @ts-expect-error should reject non-strings
     t.assert.throws(parse.bind(null, 7), new TypeError('argument header is required and must be a string'))
   })
+
+  await t.test('should use cache for repeated parses', function (t) {
+    t.plan(3)
+    const type1 = parse('text/html')
+    const type2 = parse('text/html')
+    t.assert.deepStrictEqual(type1.type, 'text/html')
+    t.assert.deepStrictEqual(type2.type, 'text/html')
+    t.assert.strictEqual(type1, type2) // Same cached object
+  })
+
+  await t.test('should use fast path for common types', function (t) {
+    t.plan(2)
+    const type = parse('application/json')
+    t.assert.deepStrictEqual(type.type, 'application/json')
+    t.assert.deepStrictEqual(Object.keys(type.parameters).length, 0)
+  })
+
+  await t.test('should handle cache eviction (LRU)', function (t) {
+    t.plan(103)
+    // Fill cache beyond its limit (100 entries) to trigger eviction
+    for (let i = 0; i < 102; i++) {
+      const type = parse(`application/test${i}`)
+      t.assert.deepStrictEqual(type.type, `application/test${i}`)
+    }
+    // Parse the first one again - should work even if evicted
+    const type = parse('application/test0')
+    t.assert.deepStrictEqual(type.type, 'application/test0')
+  })
+
+  await t.test('should handle LRU cache behavior correctly', function (t) {
+    t.plan(4)
+    // Parse a type with parameters twice - second time should be cached
+    const type1 = parse('application/json; charset=utf-8')
+    const type2 = parse('application/json; charset=utf-8')
+    // Verify they're the same cached object
+    t.assert.strictEqual(type1, type2)
+    t.assert.deepStrictEqual(type1.type, 'application/json')
+    t.assert.deepStrictEqual(type1.parameters.charset, 'utf-8')
+    // Parse again to ensure cache hit works
+    const type3 = parse('application/json; charset=utf-8')
+    t.assert.strictEqual(type1, type3)
+  })
 })
 
 test('safeParse', async function (t) {
-  t.plan(13 + invalidTypes.length)
+  t.plan(15 + invalidTypes.length)
   await t.test('should safeParse basic type', function (t) {
     t.plan(1)
     const type = safeParse('text/html')
@@ -244,5 +286,21 @@ test('safeParse', async function (t) {
     t.assert.deepStrictEqual(safeParse(null).type, '')
     // @ts-expect-error should reject non-strings
     t.assert.deepStrictEqual(Object.keys(safeParse(null).parameters).length, 0)
+  })
+
+  await t.test('should use cache for repeated safeParses', function (t) {
+    t.plan(3)
+    const type1 = safeParse('text/html')
+    const type2 = safeParse('text/html')
+    t.assert.deepStrictEqual(type1.type, 'text/html')
+    t.assert.deepStrictEqual(type2.type, 'text/html')
+    t.assert.strictEqual(type1, type2) // Same cached object
+  })
+
+  await t.test('should use fast path for common types', function (t) {
+    t.plan(2)
+    const type = safeParse('application/json')
+    t.assert.deepStrictEqual(type.type, 'application/json')
+    t.assert.deepStrictEqual(Object.keys(type.parameters).length, 0)
   })
 })
